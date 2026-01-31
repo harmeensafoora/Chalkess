@@ -1,0 +1,7 @@
+{
+  "name": "Chalkless",
+  "description": "A real-time classroom assistant that monitors live lecture transcripts and automatically generates summary or visual slides as topics are completed.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
