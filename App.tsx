@@ -75,6 +75,14 @@ function App() {
   const resetCountRef = useRef(0);
   const deleteMenuRef = useRef<HTMLDivElement>(null);
 
+  // Refs to handle stale closures in recognition callbacks
+  const activeSlideIndexRef = useRef(0);
+  const processingRef = useRef(false);
+
+  useEffect(() => {
+    activeSlideIndexRef.current = activeSlideIndex;
+  }, [activeSlideIndex]);
+
   const activeSlide = slides[activeSlideIndex] || slides[0];
 
   useEffect(() => {
@@ -181,14 +189,18 @@ function App() {
     setActiveSlideIndex(0);
     accumulatedTranscript.current = "";
     setIsProcessing(false);
+    processingRef.current = false;
     setIsDeleteMenuOpen(false);
     setCollapsedNotes(new Set());
   };
 
   const processTeacherSpeech = async (text: string, retryCount = 0) => {
-    if (isProcessing && retryCount === 0) return;
+    if (processingRef.current && retryCount === 0) return;
+    
     const currentResetCount = resetCountRef.current;
-    const targetSlideIndex = activeSlideIndex;
+    const targetSlideIndex = activeSlideIndexRef.current; // Use Ref to get latest index
+    
+    processingRef.current = true;
     setIsProcessing(true);
     
     try {
@@ -207,17 +219,29 @@ function App() {
 
       const data = safeParseModelResponse(response.text);
       if (!data) {
+        processingRef.current = false;
         setIsProcessing(false);
         return;
       }
 
       setSlides(prevSlides => {
         if (currentResetCount !== resetCountRef.current) return prevSlides;
+        
+        // Safety check for targetSlideIndex within range
+        if (targetSlideIndex >= prevSlides.length) return prevSlides;
+        
         const updatedSlides = [...prevSlides];
         const slide = { ...updatedSlides[targetSlideIndex] };
 
-        const isDefaultTitle = !slide.title || slide.title.toLowerCase().includes('untitled') || slide.title === 'Ready to listen';
-        if (isDefaultTitle && data.title) slide.title = data.title;
+        // IMPROVED LOGIC: Check for any default/placeholder title to allow overwriting
+        const isDefaultTitle = !slide.title || 
+                              slide.title.toLowerCase().includes('untitled') || 
+                              slide.title === 'Ready to listen' ||
+                              slide.title.startsWith('Class Page');
+
+        if (isDefaultTitle && data.title && data.title !== 'Ready to listen') {
+          slide.title = data.title;
+        }
 
         if (data.nodes && Array.isArray(data.nodes)) {
           data.nodes.forEach((newNode: any) => {
@@ -253,6 +277,7 @@ function App() {
       console.error("API Error:", err);
     } finally {
       if (currentResetCount === resetCountRef.current) {
+        processingRef.current = false;
         setIsProcessing(false);
       }
     }
@@ -264,6 +289,7 @@ function App() {
       if (event.results[i].isFinal) accumulatedTranscript.current += event.results[i][0].transcript + " ";
       else interimTranscript += event.results[i][0].transcript;
     }
+    
     if (silenceTimer.current) clearTimeout(silenceTimer.current);
     silenceTimer.current = setTimeout(() => {
       const text = (accumulatedTranscript.current + interimTranscript).trim();
@@ -290,7 +316,9 @@ function App() {
         setIsStarting(false);
       };
       recognition.onend = () => { 
-        if (isListening) recognition.start();
+        if (isListening) {
+          try { recognition.start(); } catch (e) {}
+        }
       };
       recognitionRef.current = recognition;
       recognition.start();
@@ -434,7 +462,7 @@ function App() {
           
           <div className="h-8 w-[1.5px] bg-slate-200 dark:bg-slate-800 opacity-40" />
           
-          {/* Pagination - Reduced border opacity for a cleaner look */}
+          {/* Pagination */}
           <div className={`flex items-center gap-3 px-4 py-2 rounded-2xl border transition-all ${isDarkMode ? 'bg-black border-slate-500/20 shadow-xl' : 'bg-white border-slate-950/10 shadow-sm'}`}>
              <button disabled={activeSlideIndex === 0} onClick={() => setActiveSlideIndex(activeSlideIndex - 1)} className={`p-1.5 transition-all hover:scale-110 active:scale-90 ${activeSlideIndex === 0 ? 'opacity-10 cursor-not-allowed' : 'opacity-100 hover:text-indigo-600'} ${isDarkMode ? 'text-white' : 'text-slate-950'}`}>
                <ChevronLeft size={20} strokeWidth={4} />
@@ -451,7 +479,6 @@ function App() {
         </div>
 
         <div className="flex items-center gap-6">
-          {/* Main Scribe Button - Less distracting active state */}
           <button 
             onClick={isListening ? stopListening : startListening} 
             disabled={isStarting}
@@ -538,7 +565,6 @@ function App() {
                           </div>
                         )}
                       </div>
-                      {/* Suble separator when collapsed or between items */}
                       {isCollapsed && !isLast && (
                         <div className={`mt-4 border-b border-dashed ${isDarkMode ? 'border-slate-800' : 'border-slate-200'}`} />
                       )}
